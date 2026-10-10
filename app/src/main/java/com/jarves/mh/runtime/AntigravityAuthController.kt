@@ -1,11 +1,13 @@
 package com.jarves.mh.runtime
 
 import android.content.Context
+import android.content.Intent
 import android.os.SystemClock
 import com.jarves.mh.R
 import com.jarves.mh.ui.AppStrings
 import java.io.File
 import java.io.RandomAccessFile
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -53,7 +55,20 @@ class AntigravityAuthController(
         if (process?.isAlive == true) return@withContext
         var activeAuthProcess: Process? = null
         var activeNativeProcess: NativeSpawnProcess? = null
+        var keepAliveServiceStarted = false
         try {
+            // OAuth opens an external browser. Keep Android from reclaiming the
+            // app/process hosting agy's PKCE session while the user is in Chrome.
+            context.startForegroundService(
+                Intent(context, RuntimeExecutionService::class.java).apply {
+                    action = RuntimeExecutionService.ACTION_START
+                    putExtra(RuntimeExecutionService.EXTRA_PROJECT_NAME, str(R.string.st_google_account))
+                    putExtra(RuntimeExecutionService.EXTRA_TITLE, str(R.string.st_google_account))
+                    putExtra(RuntimeExecutionService.EXTRA_DETAIL, str(R.string.rt_agy_starting))
+                    putExtra(RuntimeExecutionService.EXTRA_CAN_STOP, false)
+                },
+            )
+            keepAliveServiceStarted = true
             mutableState.value = AntigravityAuthState(
                 AntigravityAuthStatus.STARTING,
                 message = str(R.string.rt_agy_starting),
@@ -260,6 +275,7 @@ class AntigravityAuthController(
                 else -> Unit
             }
         } catch (error: Throwable) {
+            if (error is CancellationException) throw error
             if (mutableState.value.status != AntigravityAuthStatus.SIGNED_IN) {
                 mutableState.value = AntigravityAuthState(
                     AntigravityAuthStatus.ERROR,
@@ -276,6 +292,14 @@ class AntigravityAuthController(
             if (process === activeAuthProcess) process = null
             codeSubmitted = false
             codeSubmittedAtElapsedRealtime = null
+            if (keepAliveServiceStarted) {
+                runCatching {
+                    context.startService(
+                        Intent(context, RuntimeExecutionService::class.java)
+                            .setAction(RuntimeExecutionService.ACTION_CANCELLED),
+                    )
+                }
+            }
         }
     }
 
@@ -389,7 +413,7 @@ internal fun isAntigravityLoginStartupTimedOut(
 ): Boolean = status == AntigravityAuthStatus.STARTING &&
     nowElapsedRealtime - startedAtElapsedRealtime >= ANTIGRAVITY_LOGIN_STARTUP_TIMEOUT_MILLIS
 
-internal const val ANTIGRAVITY_LOGIN_COMPLETION_TIMEOUT_MILLIS = 120_000L
+internal const val ANTIGRAVITY_LOGIN_COMPLETION_TIMEOUT_MILLIS = 300_000L
 
 internal fun isAntigravityLoginCompletionTimedOut(
     codeSubmittedAtElapsedRealtime: Long?,
@@ -406,7 +430,7 @@ private val GOOGLE_OAUTH_URL = Regex(
     "https://accounts\\.google\\.com/[^\\s\\\"'<>]*?[?&]state=[A-Za-z0-9._~-]+",
 )
 
-private const val TERMINAL_HANDSHAKE_REPLY = "\u001B[?2026;1\$y\u001B[?2027;1\$y\u001B[?1u\n"
+private const val TERMINAL_HANDSHAKE_REPLY = "\u001B[?2026;1\$y\u001B[?2027;1\$y\u001B[?1u"
 
 private val AUTH_ANSI = Regex("\\u001B(?:\\][^\\u0007]*(?:\\u0007|\\u001B\\\\)|\\[[0-?]*[ -/]*[@-~]|[()][A-Z0-9])")
 private fun sanitizeTerminalOutput(text: String): String = text
