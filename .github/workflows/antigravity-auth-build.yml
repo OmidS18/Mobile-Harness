@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: antigravity-auth-{{ github.ref }}
+  group: antigravity-auth-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
