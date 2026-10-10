@@ -85,6 +85,7 @@
     <string name="rt_agy_install_first">ثبّت Antigravity CLI قبل تسجيل الدخول.</string>
     <string name="rt_agy_starting">جارٍ بدء تسجيل الدخول عبر Google…</string>
     <string name="rt_agy_oauth_selected">تم اختيار Google OAuth — بانتظار رابط تسجيل الدخول في المتصفح…</string>
+    <string name="rt_agy_startup_timeout">لم يظهر رابط تسجيل الدخول إلى Google خلال دقيقتين. حاول إعادة الاتصال.</string>
     <string name="rt_agy_finish_sign_in">أكمل تسجيل الدخول عبر Google، ثم الصق الرمز المؤقت.</string>
     <string name="rt_agy_google_connected">تم ربط حساب Google</string>
     <string name="rt_agy_finishing_setup">تم الاتصال بـ Google — جارٍ إنهاء إعداد Antigravity الخاص…</string>

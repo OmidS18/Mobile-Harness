@@ -85,6 +85,7 @@
     <string name="rt_agy_install_first">Instala Antigravity CLI antes de iniciar sesión.</string>
     <string name="rt_agy_starting">Iniciando el inicio de sesión con Google…</string>
     <string name="rt_agy_oauth_selected">Google OAuth seleccionado: esperando la URL de inicio de sesión del navegador…</string>
+    <string name="rt_agy_startup_timeout">La URL de inicio de sesión de Google no apareció en 2 minutos. Intenta reconectar.</string>
     <string name="rt_agy_finish_sign_in">Termina de iniciar sesión con Google y luego pega el código de un solo uso.</string>
     <string name="rt_agy_google_connected">Cuenta de Google conectada</string>
     <string name="rt_agy_finishing_setup">Google conectado: finalizando la configuración privada de Antigravity…</string>

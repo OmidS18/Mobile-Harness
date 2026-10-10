@@ -1,6 +1,7 @@
 package com.jarves.mh.runtime
 
 import android.content.Context
+import android.os.SystemClock
 import com.jarves.mh.R
 import com.jarves.mh.ui.AppStrings
 import java.io.File
@@ -49,50 +50,67 @@ class AntigravityAuthController(
 
     suspend fun beginLogin() = withContext(Dispatchers.IO) {
         if (process?.isAlive == true) return@withContext
-        if (!installer.isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) {
-            mutableState.value = AntigravityAuthState(
-                AntigravityAuthStatus.ERROR,
-                message = str(R.string.rt_agy_install_first),
-            )
-            return@withContext
-        }
-        mutableState.value = AntigravityAuthState(AntigravityAuthStatus.STARTING, message = str(R.string.rt_agy_starting))
-        codeSubmitted = false
-        authOutput.delete()
-        val runtime = installer.installedRuntime()
-        val workspace = java.io.File(context.filesDir, "workspaces/antigravity-auth").apply { mkdirs() }
-        val running = installer.process(
-            runtime.proot,
-            runtime.rootfs,
-            workspace,
-            // SSH selects agy's official manual browser URL + one-time code flow.
-            // NativeSpawn supplies a real PTY; PocketDev remains only the terminal.
-            mapOf(
-                "SSH_CONNECTION" to "127.0.0.1 1 127.0.0.1 1",
-                "TERM" to "xterm-256color",
-                "NO_COLOR" to "1",
-            ),
-            listOf(RuntimeInstaller.AGY_GUEST_PATH),
-            guestWorkspacePath = "/workspace/antigravity-auth",
-            emulateHardLinks = false,
-            outputFile = authOutput,
-            pseudoTerminal = true,
-            ptyRows = 40,
-            ptyColumns = 120,
-        )
-        process = running
-        val native = running as? NativeSpawnProcess ?: error("Unsupported Antigravity authentication process")
-        var offset = 0L
-        val output = StringBuilder()
-        var handshakeReplies = 0
-        var lastHandshakeReplyLength = 0
-        var loginMenuAdvanced = false
-        var colorScreenCompleted = false
-        var renderingScreenCompleted = false
-        var privacyScreenCompleted = false
-        var workspaceTrustCompleted = false
+        var activeAuthProcess: Process? = null
+        var activeNativeProcess: NativeSpawnProcess? = null
         try {
+            mutableState.value = AntigravityAuthState(
+                AntigravityAuthStatus.STARTING,
+                message = str(R.string.rt_agy_starting),
+            )
+            codeSubmitted = false
+            authOutput.delete()
+            if (!installer.isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) {
+                mutableState.value = AntigravityAuthState(
+                    AntigravityAuthStatus.ERROR,
+                    message = str(R.string.rt_agy_install_first),
+                )
+                return@withContext
+            }
+            val runtime = installer.installedRuntime()
+            val workspace = java.io.File(context.filesDir, "workspaces/antigravity-auth").apply { mkdirs() }
+            val running = installer.process(
+                runtime.proot,
+                runtime.rootfs,
+                workspace,
+                // SSH selects agy's official manual browser URL + one-time code flow.
+                // NativeSpawn supplies a real PTY; PocketDev remains only the terminal.
+                mapOf(
+                    "SSH_CONNECTION" to "127.0.0.1 1 127.0.0.1 1",
+                    "TERM" to "xterm-256color",
+                    "NO_COLOR" to "1",
+                ),
+                listOf(RuntimeInstaller.AGY_GUEST_PATH),
+                guestWorkspacePath = "/workspace/antigravity-auth",
+                emulateHardLinks = false,
+                outputFile = authOutput,
+                pseudoTerminal = true,
+                ptyRows = 40,
+                ptyColumns = 120,
+            )
+            activeAuthProcess = running
+            process = running
+            val native = running as? NativeSpawnProcess ?: error("Unsupported Antigravity authentication process")
+            activeNativeProcess = native
+            val loginStartedAtElapsedRealtime = SystemClock.elapsedRealtime()
+            var offset = 0L
+            val output = StringBuilder()
+            var handshakeReplies = 0
+            var lastHandshakeReplyLength = 0
+            var loginMenuAdvanced = false
+            var colorScreenCompleted = false
+            var renderingScreenCompleted = false
+            var privacyScreenCompleted = false
+            var workspaceTrustCompleted = false
             while (running.isAlive || native.outputFile.length() > offset) {
+                if (
+                    isAntigravityLoginStartupTimedOut(
+                        loginStartedAtElapsedRealtime,
+                        SystemClock.elapsedRealtime(),
+                        mutableState.value.status,
+                    )
+                ) {
+                    error(str(R.string.rt_agy_startup_timeout))
+                }
                 val available = native.outputFile.length() - offset
                 if (available <= 0) {
                     delay(80)
@@ -221,7 +239,13 @@ class AntigravityAuthController(
                     error(str(R.string.rt_agy_auth_failed))
                 }
             }
-            if (!codeSubmitted && mutableState.value.status == AntigravityAuthStatus.STARTING) {
+            if (
+                !codeSubmitted &&
+                mutableState.value.status in setOf(
+                    AntigravityAuthStatus.STARTING,
+                    AntigravityAuthStatus.AWAITING_CODE,
+                )
+            ) {
                 val exit = running.waitFor()
                 error(str(R.string.rt_agy_closed_early, exit))
             }
@@ -233,10 +257,13 @@ class AntigravityAuthController(
                 )
             }
         } finally {
-            if (running.isAlive) running.destroy()
-            runCatching { running.outputStream.close() }
-            native.outputFile.delete() // OAuth terminal output is intentionally ephemeral.
-            process = null
+            activeAuthProcess?.let { active ->
+                if (active.isAlive) active.destroy()
+                runCatching { active.outputStream.close() }
+            }
+            activeNativeProcess?.outputFile?.delete()
+            authOutput.delete() // OAuth terminal output is intentionally ephemeral.
+            if (process === activeAuthProcess) process = null
             codeSubmitted = false
         }
     }
@@ -340,6 +367,15 @@ private fun extractSignedInEmail(output: String): String? =
         .findAll(output)
         .map { it.value }
         .firstOrNull { !it.endsWith(".apps.googleusercontent.com", ignoreCase = true) }
+
+internal const val ANTIGRAVITY_LOGIN_STARTUP_TIMEOUT_MILLIS = 120_000L
+
+internal fun isAntigravityLoginStartupTimedOut(
+    startedAtElapsedRealtime: Long,
+    nowElapsedRealtime: Long,
+    status: AntigravityAuthStatus,
+): Boolean = status == AntigravityAuthStatus.STARTING &&
+    nowElapsedRealtime - startedAtElapsedRealtime >= ANTIGRAVITY_LOGIN_STARTUP_TIMEOUT_MILLIS
 
 private val URL_CHARACTERS = ("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" +
     "-._~:/?#[]@!$&'()*+,;=%").toSet()

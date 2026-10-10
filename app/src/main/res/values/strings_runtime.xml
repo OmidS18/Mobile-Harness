@@ -85,6 +85,7 @@
     <string name="rt_agy_install_first">Install Antigravity CLI before signing in.</string>
     <string name="rt_agy_starting">Starting Google sign-in…</string>
     <string name="rt_agy_oauth_selected">Google OAuth selected — waiting for the browser sign-in URL…</string>
+    <string name="rt_agy_startup_timeout">The Google sign-in URL did not appear within 2 minutes. Try reconnecting.</string>
     <string name="rt_agy_finish_sign_in">Finish signing in with Google, then paste the one-time code.</string>
     <string name="rt_agy_google_connected">Google account connected</string>
     <string name="rt_agy_finishing_setup">Google connected — finishing private Antigravity setup…</string>
