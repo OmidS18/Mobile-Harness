@@ -1,0 +1,77 @@
+name: Antigravity login fix - test and build APK
+
+on:
+  push:
+    branches:
+      - fix/antigravity-login-stall
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: antigravity-auth-{{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install required Android SDK packages
+        run: |
+          sdkmanager --install \
+            "platforms;android-36" \
+            "build-tools;35.0.0" \
+            "ndk;28.2.13676358" \
+            "cmake;3.22.1"
+
+      - name: Download and verify the pinned Antigravity runtime bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="dist/runtime-bundles/pocketdev-agy-arm64-2026.09.1.tar.zst"
+          mkdir -p "$(dirname "$bundle")"
+          curl --fail --location --retry 3 \
+            "https://github.com/techjarves/Mobile-Harness/releases/download/runtime-2026.09.4/pocketdev-agy-arm64-2026.09.1.tar.zst" \
+            --output "$bundle"
+          echo "a659ab9188956fc4721ca86fb21b5118e0e489f47a5e02ae6b4f2fb423659d78  $bundle" | sha256sum --check
+
+      - name: Run unit tests and build isolated online debug APK
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon --stacktrace \
+            testOnlineDebugUnitTest \
+            assembleOnlineDebug \
+            -PmhDebugPackageSuffix=.loginfix
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: antigravity-auth-test-reports
+          path: app/build/reports/tests/testOnlineDebugUnitTest/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload test APK
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mobile-harness-antigravity-login-fix-debug-apk
+          path: app/build/outputs/apk/online/debug/*.apk
+          if-no-files-found: error
+          retention-days: 7
