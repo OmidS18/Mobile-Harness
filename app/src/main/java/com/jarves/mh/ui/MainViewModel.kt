@@ -584,11 +584,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
-        if (antigravityAuthController.hasOfficialCredential() &&
-            (!preferences.antigravitySignedIn || preferences.antigravityAccountEmail.isBlank())
-        ) {
-            viewModelScope.launch { antigravityAuthController.beginLogin() }
-        }
+        // Do not start the interactive OAuth flow automatically during ViewModel creation.
+        // A stale preference combined with an old credential file can otherwise keep the
+        // account card in STARTING and hide the sign-in button before the user can act.
+        // Login/reconnect is initiated explicitly from the Antigravity account card.
         if (!preferences.legacySeededCredentialRemoved) {
             vault.remove(ProviderKind.CUSTOM.name)
             preferences.legacySeededCredentialRemoved = true
