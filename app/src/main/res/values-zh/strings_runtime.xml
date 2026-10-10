@@ -85,6 +85,7 @@
     <string name="rt_agy_install_first">请先安装 Antigravity CLI 再登录。</string>
     <string name="rt_agy_starting">正在启动 Google 登录…</string>
     <string name="rt_agy_oauth_selected">已选择 Google OAuth — 正在等待浏览器登录链接…</string>
+    <string name="rt_agy_startup_timeout">Google 登录链接在 2 分钟内未显示。请尝试重新连接。</string>
     <string name="rt_agy_finish_sign_in">请完成 Google 登录，然后粘贴一次性验证码。</string>
     <string name="rt_agy_google_connected">Google 帐号已连接</string>
     <string name="rt_agy_finishing_setup">Google 已连接 — 正在完成 Antigravity 私有设置…</string>

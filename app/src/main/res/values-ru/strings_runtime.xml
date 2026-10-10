@@ -85,6 +85,7 @@
     <string name="rt_agy_install_first">Установите Antigravity CLI перед входом.</string>
     <string name="rt_agy_starting">Запуск входа через Google…</string>
     <string name="rt_agy_oauth_selected">Выбран Google OAuth — ожидание ссылки для входа в браузере…</string>
+    <string name="rt_agy_startup_timeout">Ссылка для входа через Google не появилась за 2 минуты. Попробуйте подключиться снова.</string>
     <string name="rt_agy_finish_sign_in">Завершите вход через Google, затем вставьте одноразовый код.</string>
     <string name="rt_agy_google_connected">Аккаунт Google подключён</string>
     <string name="rt_agy_finishing_setup">Google подключён — завершение частной настройки Antigravity…</string>

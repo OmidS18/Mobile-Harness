@@ -1296,6 +1296,25 @@ private fun AgentAntigravityCard(
                 AntigravityAuthStatus.SIGNED_IN -> {}
             }
 
+            if (
+                auth.status in setOf(
+                    AntigravityAuthStatus.STARTING,
+                    AntigravityAuthStatus.COMPLETING,
+                    AntigravityAuthStatus.ERROR,
+                ) && !auth.message.isNullOrBlank()
+            ) {
+                Text(
+                    text = auth.message.orEmpty(),
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                    color = if (auth.status == AntigravityAuthStatus.ERROR) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+
             if (auth.status == AntigravityAuthStatus.SIGNED_IN) {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
 

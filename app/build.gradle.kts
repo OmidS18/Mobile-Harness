@@ -122,6 +122,11 @@ android {
 
     buildTypes {
         debug {
+            // Optional isolated package ID for CI-built APKs. This lets testers
+            // install the fix beside the official app without replacing its data.
+            providers.gradleProperty("mhDebugPackageSuffix").orNull?.let {
+                applicationIdSuffix = it
+            }
             buildConfigField(
                 "String",
                 "TEST_OPENROUTER_API_KEY",

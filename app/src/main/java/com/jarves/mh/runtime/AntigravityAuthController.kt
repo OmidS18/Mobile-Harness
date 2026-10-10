@@ -1,10 +1,13 @@
 package com.jarves.mh.runtime
 
 import android.content.Context
+import android.content.Intent
+import android.os.SystemClock
 import com.jarves.mh.R
 import com.jarves.mh.ui.AppStrings
 import java.io.File
 import java.io.RandomAccessFile
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,6 +36,7 @@ class AntigravityAuthController(
     private val logoutOutput = File(context.cacheDir, "antigravity-logout-output.log")
     @Volatile private var process: Process? = null
     @Volatile private var codeSubmitted = false
+    @Volatile private var codeSubmittedAtElapsedRealtime: Long? = null
 
     init {
         // Remove output left by an app/process crash before starting a new OAuth flow.
@@ -49,50 +53,90 @@ class AntigravityAuthController(
 
     suspend fun beginLogin() = withContext(Dispatchers.IO) {
         if (process?.isAlive == true) return@withContext
-        if (!installer.isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) {
-            mutableState.value = AntigravityAuthState(
-                AntigravityAuthStatus.ERROR,
-                message = str(R.string.rt_agy_install_first),
-            )
-            return@withContext
-        }
-        mutableState.value = AntigravityAuthState(AntigravityAuthStatus.STARTING, message = str(R.string.rt_agy_starting))
-        codeSubmitted = false
-        authOutput.delete()
-        val runtime = installer.installedRuntime()
-        val workspace = java.io.File(context.filesDir, "workspaces/antigravity-auth").apply { mkdirs() }
-        val running = installer.process(
-            runtime.proot,
-            runtime.rootfs,
-            workspace,
-            // SSH selects agy's official manual browser URL + one-time code flow.
-            // NativeSpawn supplies a real PTY; PocketDev remains only the terminal.
-            mapOf(
-                "SSH_CONNECTION" to "127.0.0.1 1 127.0.0.1 1",
-                "TERM" to "xterm-256color",
-                "NO_COLOR" to "1",
-            ),
-            listOf(RuntimeInstaller.AGY_GUEST_PATH),
-            guestWorkspacePath = "/workspace/antigravity-auth",
-            emulateHardLinks = false,
-            outputFile = authOutput,
-            pseudoTerminal = true,
-            ptyRows = 40,
-            ptyColumns = 120,
-        )
-        process = running
-        val native = running as? NativeSpawnProcess ?: error("Unsupported Antigravity authentication process")
-        var offset = 0L
-        val output = StringBuilder()
-        var handshakeReplies = 0
-        var lastHandshakeReplyLength = 0
-        var loginMenuAdvanced = false
-        var colorScreenCompleted = false
-        var renderingScreenCompleted = false
-        var privacyScreenCompleted = false
-        var workspaceTrustCompleted = false
+        var activeAuthProcess: Process? = null
+        var activeNativeProcess: NativeSpawnProcess? = null
+        var keepAliveServiceStarted = false
         try {
+            // OAuth opens an external browser. Keep Android from reclaiming the
+            // app/process hosting agy's PKCE session while the user is in Chrome.
+            context.startForegroundService(
+                Intent(context, RuntimeExecutionService::class.java).apply {
+                    action = RuntimeExecutionService.ACTION_START
+                    putExtra(RuntimeExecutionService.EXTRA_PROJECT_NAME, str(R.string.st_google_account))
+                    putExtra(RuntimeExecutionService.EXTRA_TITLE, str(R.string.st_google_account))
+                    putExtra(RuntimeExecutionService.EXTRA_DETAIL, str(R.string.rt_agy_starting))
+                    putExtra(RuntimeExecutionService.EXTRA_CAN_STOP, false)
+                },
+            )
+            keepAliveServiceStarted = true
+            mutableState.value = AntigravityAuthState(
+                AntigravityAuthStatus.STARTING,
+                message = str(R.string.rt_agy_starting),
+            )
+            codeSubmitted = false
+            codeSubmittedAtElapsedRealtime = null
+            authOutput.delete()
+            if (!installer.isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) {
+                mutableState.value = AntigravityAuthState(
+                    AntigravityAuthStatus.ERROR,
+                    message = str(R.string.rt_agy_install_first),
+                )
+                return@withContext
+            }
+            val runtime = installer.installedRuntime()
+            val workspace = java.io.File(context.filesDir, "workspaces/antigravity-auth").apply { mkdirs() }
+            val running = installer.process(
+                runtime.proot,
+                runtime.rootfs,
+                workspace,
+                // SSH selects agy's official manual browser URL + one-time code flow.
+                // NativeSpawn supplies a real PTY; PocketDev remains only the terminal.
+                mapOf(
+                    "SSH_CONNECTION" to "127.0.0.1 1 127.0.0.1 1",
+                    "TERM" to "xterm-256color",
+                    "NO_COLOR" to "1",
+                ),
+                listOf(RuntimeInstaller.AGY_GUEST_PATH),
+                guestWorkspacePath = "/workspace/antigravity-auth",
+                emulateHardLinks = false,
+                outputFile = authOutput,
+                pseudoTerminal = true,
+                ptyRows = 40,
+                ptyColumns = 120,
+            )
+            activeAuthProcess = running
+            process = running
+            val native = running as? NativeSpawnProcess ?: error("Unsupported Antigravity authentication process")
+            activeNativeProcess = native
+            val loginStartedAtElapsedRealtime = SystemClock.elapsedRealtime()
+            var offset = 0L
+            val output = StringBuilder()
+            var handshakeReplies = 0
+            var lastHandshakeReplyLength = 0
+            var loginMenuAdvanced = false
+            var colorScreenCompleted = false
+            var renderingScreenCompleted = false
+            var privacyScreenCompleted = false
+            var workspaceTrustCompleted = false
             while (running.isAlive || native.outputFile.length() > offset) {
+                if (
+                    isAntigravityLoginStartupTimedOut(
+                        loginStartedAtElapsedRealtime,
+                        SystemClock.elapsedRealtime(),
+                        mutableState.value.status,
+                    )
+                ) {
+                    error(str(R.string.rt_agy_startup_timeout))
+                }
+                if (
+                    isAntigravityLoginCompletionTimedOut(
+                        codeSubmittedAtElapsedRealtime,
+                        SystemClock.elapsedRealtime(),
+                        mutableState.value.status,
+                    )
+                ) {
+                    error(str(R.string.rt_agy_session_expired))
+                }
                 val available = native.outputFile.length() - offset
                 if (available <= 0) {
                     delay(80)
@@ -221,11 +265,17 @@ class AntigravityAuthController(
                     error(str(R.string.rt_agy_auth_failed))
                 }
             }
-            if (!codeSubmitted && mutableState.value.status == AntigravityAuthStatus.STARTING) {
-                val exit = running.waitFor()
-                error(str(R.string.rt_agy_closed_early, exit))
+            when (mutableState.value.status) {
+                AntigravityAuthStatus.STARTING -> {
+                    val exit = running.waitFor()
+                    error(str(R.string.rt_agy_closed_early, exit))
+                }
+                AntigravityAuthStatus.AWAITING_CODE,
+                AntigravityAuthStatus.COMPLETING -> error(str(R.string.rt_agy_session_expired))
+                else -> Unit
             }
         } catch (error: Throwable) {
+            if (error is CancellationException) throw error
             if (mutableState.value.status != AntigravityAuthStatus.SIGNED_IN) {
                 mutableState.value = AntigravityAuthState(
                     AntigravityAuthStatus.ERROR,
@@ -233,11 +283,23 @@ class AntigravityAuthController(
                 )
             }
         } finally {
-            if (running.isAlive) running.destroy()
-            runCatching { running.outputStream.close() }
-            native.outputFile.delete() // OAuth terminal output is intentionally ephemeral.
-            process = null
+            activeAuthProcess?.let { active ->
+                if (active.isAlive) active.destroy()
+                runCatching { active.outputStream.close() }
+            }
+            activeNativeProcess?.outputFile?.delete()
+            authOutput.delete() // OAuth terminal output is intentionally ephemeral.
+            if (process === activeAuthProcess) process = null
             codeSubmitted = false
+            codeSubmittedAtElapsedRealtime = null
+            if (keepAliveServiceStarted) {
+                runCatching {
+                    context.startService(
+                        Intent(context, RuntimeExecutionService::class.java)
+                            .setAction(RuntimeExecutionService.ACTION_CANCELLED),
+                    )
+                }
+            }
         }
     }
 
@@ -251,6 +313,7 @@ class AntigravityAuthController(
         running.outputStream.write((value + "\r\n").toByteArray())
         running.outputStream.flush()
         codeSubmitted = true
+        codeSubmittedAtElapsedRealtime = SystemClock.elapsedRealtime()
         mutableState.value = mutableState.value.copy(
             status = AntigravityAuthStatus.COMPLETING,
             message = str(R.string.rt_agy_completing),
@@ -341,6 +404,25 @@ private fun extractSignedInEmail(output: String): String? =
         .map { it.value }
         .firstOrNull { !it.endsWith(".apps.googleusercontent.com", ignoreCase = true) }
 
+internal const val ANTIGRAVITY_LOGIN_STARTUP_TIMEOUT_MILLIS = 120_000L
+
+internal fun isAntigravityLoginStartupTimedOut(
+    startedAtElapsedRealtime: Long,
+    nowElapsedRealtime: Long,
+    status: AntigravityAuthStatus,
+): Boolean = status == AntigravityAuthStatus.STARTING &&
+    nowElapsedRealtime - startedAtElapsedRealtime >= ANTIGRAVITY_LOGIN_STARTUP_TIMEOUT_MILLIS
+
+internal const val ANTIGRAVITY_LOGIN_COMPLETION_TIMEOUT_MILLIS = 300_000L
+
+internal fun isAntigravityLoginCompletionTimedOut(
+    codeSubmittedAtElapsedRealtime: Long?,
+    nowElapsedRealtime: Long,
+    status: AntigravityAuthStatus,
+): Boolean = status == AntigravityAuthStatus.COMPLETING &&
+    codeSubmittedAtElapsedRealtime != null &&
+    nowElapsedRealtime - codeSubmittedAtElapsedRealtime >= ANTIGRAVITY_LOGIN_COMPLETION_TIMEOUT_MILLIS
+
 private val URL_CHARACTERS = ("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" +
     "-._~:/?#[]@!$&'()*+,;=%").toSet()
 
@@ -348,7 +430,7 @@ private val GOOGLE_OAUTH_URL = Regex(
     "https://accounts\\.google\\.com/[^\\s\\\"'<>]*?[?&]state=[A-Za-z0-9._~-]+",
 )
 
-private const val TERMINAL_HANDSHAKE_REPLY = "\u001B[?2026;1\$y\u001B[?2027;1\$y\u001B[?1u\n"
+private const val TERMINAL_HANDSHAKE_REPLY = "\u001B[?2026;1\$y\u001B[?2027;1\$y\u001B[?1u"
 
 private val AUTH_ANSI = Regex("\\u001B(?:\\][^\\u0007]*(?:\\u0007|\\u001B\\\\)|\\[[0-?]*[ -/]*[@-~]|[()][A-Z0-9])")
 private fun sanitizeTerminalOutput(text: String): String = text

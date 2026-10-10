@@ -85,6 +85,7 @@
     <string name="rt_agy_install_first">साइन इन करने से पहले Antigravity CLI इंस्टॉल करें।</string>
     <string name="rt_agy_starting">Google साइन-इन शुरू हो रहा है…</string>
     <string name="rt_agy_oauth_selected">Google OAuth चुना गया — ब्राउज़र साइन-इन URL की प्रतीक्षा है…</string>
+    <string name="rt_agy_startup_timeout">2 मिनट में Google साइन-इन URL नहीं आया। फिर से कनेक्ट करने की कोशिश करें।</string>
     <string name="rt_agy_finish_sign_in">Google से साइन इन पूरा करें, फिर एक-बार वाला कोड पेस्ट करें।</string>
     <string name="rt_agy_google_connected">Google खाता कनेक्ट हो गया</string>
     <string name="rt_agy_finishing_setup">Google कनेक्ट हो गया — निजी Antigravity सेटअप पूरा हो रहा है…</string>
