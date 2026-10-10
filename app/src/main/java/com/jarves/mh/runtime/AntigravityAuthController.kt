@@ -34,6 +34,7 @@ class AntigravityAuthController(
     private val logoutOutput = File(context.cacheDir, "antigravity-logout-output.log")
     @Volatile private var process: Process? = null
     @Volatile private var codeSubmitted = false
+    @Volatile private var codeSubmittedAtElapsedRealtime: Long? = null
 
     init {
         // Remove output left by an app/process crash before starting a new OAuth flow.
@@ -58,6 +59,7 @@ class AntigravityAuthController(
                 message = str(R.string.rt_agy_starting),
             )
             codeSubmitted = false
+            codeSubmittedAtElapsedRealtime = null
             authOutput.delete()
             if (!installer.isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) {
                 mutableState.value = AntigravityAuthState(
@@ -110,6 +112,15 @@ class AntigravityAuthController(
                     )
                 ) {
                     error(str(R.string.rt_agy_startup_timeout))
+                }
+                if (
+                    isAntigravityLoginCompletionTimedOut(
+                        codeSubmittedAtElapsedRealtime,
+                        SystemClock.elapsedRealtime(),
+                        mutableState.value.status,
+                    )
+                ) {
+                    error(str(R.string.rt_agy_session_expired))
                 }
                 val available = native.outputFile.length() - offset
                 if (available <= 0) {
@@ -239,15 +250,14 @@ class AntigravityAuthController(
                     error(str(R.string.rt_agy_auth_failed))
                 }
             }
-            if (
-                !codeSubmitted &&
-                mutableState.value.status in setOf(
-                    AntigravityAuthStatus.STARTING,
-                    AntigravityAuthStatus.AWAITING_CODE,
-                )
-            ) {
-                val exit = running.waitFor()
-                error(str(R.string.rt_agy_closed_early, exit))
+            when (mutableState.value.status) {
+                AntigravityAuthStatus.STARTING -> {
+                    val exit = running.waitFor()
+                    error(str(R.string.rt_agy_closed_early, exit))
+                }
+                AntigravityAuthStatus.AWAITING_CODE,
+                AntigravityAuthStatus.COMPLETING -> error(str(R.string.rt_agy_session_expired))
+                else -> Unit
             }
         } catch (error: Throwable) {
             if (mutableState.value.status != AntigravityAuthStatus.SIGNED_IN) {
@@ -265,6 +275,7 @@ class AntigravityAuthController(
             authOutput.delete() // OAuth terminal output is intentionally ephemeral.
             if (process === activeAuthProcess) process = null
             codeSubmitted = false
+            codeSubmittedAtElapsedRealtime = null
         }
     }
 
@@ -278,6 +289,7 @@ class AntigravityAuthController(
         running.outputStream.write((value + "\r\n").toByteArray())
         running.outputStream.flush()
         codeSubmitted = true
+        codeSubmittedAtElapsedRealtime = SystemClock.elapsedRealtime()
         mutableState.value = mutableState.value.copy(
             status = AntigravityAuthStatus.COMPLETING,
             message = str(R.string.rt_agy_completing),
@@ -376,6 +388,16 @@ internal fun isAntigravityLoginStartupTimedOut(
     status: AntigravityAuthStatus,
 ): Boolean = status == AntigravityAuthStatus.STARTING &&
     nowElapsedRealtime - startedAtElapsedRealtime >= ANTIGRAVITY_LOGIN_STARTUP_TIMEOUT_MILLIS
+
+internal const val ANTIGRAVITY_LOGIN_COMPLETION_TIMEOUT_MILLIS = 120_000L
+
+internal fun isAntigravityLoginCompletionTimedOut(
+    codeSubmittedAtElapsedRealtime: Long?,
+    nowElapsedRealtime: Long,
+    status: AntigravityAuthStatus,
+): Boolean = status == AntigravityAuthStatus.COMPLETING &&
+    codeSubmittedAtElapsedRealtime != null &&
+    nowElapsedRealtime - codeSubmittedAtElapsedRealtime >= ANTIGRAVITY_LOGIN_COMPLETION_TIMEOUT_MILLIS
 
 private val URL_CHARACTERS = ("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" +
     "-._~:/?#[]@!$&'()*+,;=%").toSet()
